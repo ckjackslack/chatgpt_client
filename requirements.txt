@@ -1,0 +1,6 @@
+certifi @ file:///home/ckjackslack/.cache/pypoetry/artifacts/17/c7/62/fff2f22fc119ec960e5bf6a5a33f66a167ed2e253f2874f8a7575f3cd9/certifi-2022.12.7-py3-none-any.whl
+charset-normalizer @ file:///home/ckjackslack/.cache/pypoetry/artifacts/67/b4/03/cdaddce8ab927d231a326cf8e64eea07f9a9720df3a128ed4b7dca50fe/charset_normalizer-3.1.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+idna @ file:///home/ckjackslack/.cache/pypoetry/artifacts/16/15/44/cca0e0c3c9cc74731a4729bf2edfa1adcc24fb9f63a9578a3af5992311/idna-3.4-py3-none-any.whl
+requests @ file:///home/ckjackslack/.cache/pypoetry/artifacts/3d/1f/aa/5e8217c68413908512431e37461a959c5f978e280e5d533e90eb0bb47e/requests-2.28.2-py3-none-any.whl
+tabulate @ file:///home/ckjackslack/.cache/pypoetry/artifacts/04/fa/c0/047db4a27b1c58c48057dc425160a0f5e019f42f042e546ba2d569e335/tabulate-0.9.0-py3-none-any.whl
+urllib3 @ file:///home/ckjackslack/.cache/pypoetry/artifacts/ef/2d/af/fa06784093389a1a269e2da55022b9a01445f55405ccacad13396b421a/urllib3-1.26.15-py2.py3-none-any.whl
