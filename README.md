@@ -44,7 +44,7 @@ $ python3 chatgpt.py --action="show"
 2) Show full response for given database entry id
 
 ```bash
-$ python3 chatgpt --id=1
+$ python3 chatgpt.py --id=1
 ```
 
 or
@@ -62,7 +62,7 @@ $ python3 chatgpt.py --action="search"
 4) Send your query to chatgpt and get back response (it will be printed to stdout and inserted into database for later retrieval)
 
 ```bash
-$ python3 chatgpt --action="ask" --query="How much is the fish?"
+$ python3 chatgpt.py --action="ask" --query="How much is the fish?"
 ```
 
 5) Clear the database (to start over again)
