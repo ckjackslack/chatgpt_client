@@ -47,13 +47,19 @@ $ python3 chatgpt.py --action="show"
 $ python3 chatgpt --id=1
 ```
 
-3) Search for all code in your current prompt database (either valid Python code in response column, or snippets found between Markdown backticks.
+or
+
+```bash
+$ python3 chatgpt.py --action="show" --id=1
+```
+
+3) Search for all code in your current prompt database (either valid Python code in "response" column, or snippets found between Markdown backticks)
 
 ```bash
 $ python3 chatgpt.py --action="search"
 ```
 
-4) Send your query to chatgpt to get back the response (it will be printed to stdout and inserted into database for later retrieval)
+4) Send your query to chatgpt and get back response (it will be printed to stdout and inserted into database for later retrieval)
 
 ```bash
 $ python3 chatgpt --action="ask" --query="How much is the fish?"
