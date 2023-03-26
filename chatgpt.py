@@ -161,7 +161,13 @@ def main():
     assert "OPENAI_API_KEY" in globals(), "No .env file or missing key."
     headers = {}
     headers.update(**get_auth_header(OPENAI_API_KEY))
-    recent_model = 'gpt-3.5-turbo-0301'
+
+    if "MODEL" not in globals():
+        recent_model = 'gpt-3.5-turbo-0301'
+    elif MODEL is None:
+        recent_model = get_recent_model(headers)
+    else:
+        recent_model = MODEL
 
     args = cli()
     query = args.query
@@ -238,12 +244,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-# usage:
-# python3 chatgpt.py --query="What is Python?" --action="ask"
-# python3 chatgpt.py --action="show"
-# python3 chatgpt.py --action="show" --id=5
-# python3 chatgpt.py
-# python3 chatgpt.py --action="clear"
-# python3 chatgpt.py --action="search"
