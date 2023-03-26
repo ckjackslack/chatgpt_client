@@ -59,7 +59,7 @@ $ python3 chatgpt.py --action="search"
 $ python3 chatgpt --action="ask" --query="How much is the fish?"
 ```
 
-4) Clear the database
+5) Clear the database (to start over again)
 
 ```bash
 $ python3 chatgpt.py --action="clear"
