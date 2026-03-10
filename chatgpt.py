@@ -34,7 +34,7 @@ def cli(**kwargs) -> argparse.Namespace:
 
     flat_args = []
     for key, value in kwargs.items():
-        flat_args.extend((f"--{key}", value))
+        flat_args.extend((f"--{key}", str(value)))
     return parser.parse_args(flat_args)
 
 
