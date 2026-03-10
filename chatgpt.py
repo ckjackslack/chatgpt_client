@@ -194,7 +194,8 @@ def resolve_model(headers: dict[str, str]) -> str:
 def main() -> None:
     load_env()
     api_key = os.environ.get("OPENAI_API_KEY")
-    assert api_key, "No .env file or missing key."
+    if not api_key:
+        raise RuntimeError("No .env file or missing OPENAI_API_KEY.")
 
     headers = get_auth_header(api_key)
     model = resolve_model(headers)
