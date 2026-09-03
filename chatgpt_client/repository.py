@@ -9,7 +9,6 @@ from typing import cast
 from chatgpt_client.errors import RepositoryError
 from chatgpt_client.models import NewPrompt, StoredPrompt
 
-
 SCHEMA_VERSION = 2
 SQLITE_TIMEOUT_SECONDS = 5.0
 _SELECT_PROMPTS = """

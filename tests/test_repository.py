@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,7 @@ import pytest
 from chatgpt_client.errors import RepositoryError
 from chatgpt_client.models import NewPrompt
 from chatgpt_client.repository import SCHEMA_VERSION, PromptRepository
-from tests.helpers import PromptFactory
+from tests.helpers import PromptFactory, sqlite_connection
 
 
 def test_add_get_list_and_clear(
@@ -76,7 +75,7 @@ def test_initialize_creates_parent_directory(tmp_path: Path) -> None:
 def test_legacy_schema_is_migrated_without_data_loss(tmp_path: Path) -> None:
     database = tmp_path / "legacy.db"
     fixture = Path(__file__).parent / "fixtures" / "legacy_prompts.sql"
-    with sqlite3.connect(database) as connection:
+    with sqlite_connection(database) as connection:
         connection.executescript(fixture.read_text(encoding="utf-8"))
 
     repository = PromptRepository(database)
@@ -86,7 +85,7 @@ def test_legacy_schema_is_migrated_without_data_loss(tmp_path: Path) -> None:
     assert stored.prompt == "old question"
     assert stored.response_id == ""
     assert stored.request_id is None
-    with sqlite3.connect(database) as connection:
+    with sqlite_connection(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         columns = {row[1] for row in connection.execute("PRAGMA table_info(prompts)")}
     assert version == SCHEMA_VERSION
@@ -104,7 +103,7 @@ def test_initialize_is_idempotent(
 
 def test_newer_schema_version_is_rejected(tmp_path: Path) -> None:
     database = tmp_path / "future.db"
-    with sqlite3.connect(database) as connection:
+    with sqlite_connection(database) as connection:
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
 
     with pytest.raises(RepositoryError, match="newer than supported"):
@@ -113,7 +112,7 @@ def test_newer_schema_version_is_rejected(tmp_path: Path) -> None:
 
 def test_malformed_legacy_schema_is_rejected(tmp_path: Path) -> None:
     database = tmp_path / "malformed.db"
-    with sqlite3.connect(database) as connection:
+    with sqlite_connection(database) as connection:
         connection.execute("CREATE TABLE prompts (id INTEGER PRIMARY KEY)")
 
     with pytest.raises(RepositoryError, match="missing required columns"):
@@ -141,6 +140,6 @@ def test_request_id_round_trip(repository: PromptRepository) -> None:
 
 
 def test_wal_mode_is_enabled(repository: PromptRepository) -> None:
-    with sqlite3.connect(repository.database_path) as connection:
+    with sqlite_connection(repository.database_path) as connection:
         mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
     assert mode == "wal"

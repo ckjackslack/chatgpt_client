@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import sqlite3
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
-from chatgpt_client.application import GeneratorFactory
 from chatgpt_client.api import OpenAIClientConfig
+from chatgpt_client.application import GeneratorFactory
 from chatgpt_client.config import Settings
 from chatgpt_client.models import GeneratedResponse, StoredPrompt
-
 
 @dataclass(frozen=True, slots=True)
 class GenerationCall:
@@ -77,3 +79,13 @@ class PromptFactory(Protocol):
 
 class SettingsFactory(Protocol):
     def __call__(self, **overrides: object) -> Settings: ...
+
+
+@contextmanager
+def sqlite_connection(path: Path) -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()

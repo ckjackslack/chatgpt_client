@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from chatgpt_client.application import ChatGPTApplication
 from chatgpt_client.api import OpenAIClientConfig
+from chatgpt_client.application import ChatGPTApplication
 from chatgpt_client.errors import ConfigurationError
 from chatgpt_client.repository import PromptRepository
 from tests.helpers import FakeGenerator, FakeGeneratorFactory, PromptFactory, SettingsFactory
-
 
 @pytest.fixture
 def application(

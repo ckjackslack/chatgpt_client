@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from chatgpt_client.api import OpenAIClientConfig
 from chatgpt_client.cli import (
     AskCommand,
     ClearCommand,
@@ -11,11 +12,9 @@ from chatgpt_client.cli import (
     ShowCommand,
     parse_command,
 )
-from chatgpt_client.api import OpenAIClientConfig
 from chatgpt_client.errors import ResponseGenerationError
 from chatgpt_client.repository import PromptRepository
 from tests.helpers import CLIRunner, FakeGenerator, FakeGeneratorFactory, PromptFactory
-
 
 @pytest.mark.parametrize(
     ("arguments", "command_type"),

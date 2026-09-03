@@ -7,7 +7,6 @@ from chatgpt_client.config import Settings
 from chatgpt_client.models import NewPrompt, StoredPrompt
 from chatgpt_client.repository import PromptRepository
 
-
 GeneratorFactory = Callable[[OpenAIClientConfig], TextGenerator]
 
 
