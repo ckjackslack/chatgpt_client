@@ -9,7 +9,9 @@ presentation in separate modules.
 - Uses the official `openai` Python SDK and the Responses API.
 - Stores responses remotely only when explicitly enabled; local history is always kept in SQLite.
 - Local commands (`show`, `search`, and `clear`) work without an API key or network access.
-- Migrates an existing `prompts.db` table in place, including databases created by older releases.
+- Runs explicit, transactional SQLite schema migrations without discarding existing history.
+- Records OpenAI response and request IDs for production diagnostics.
+- Uses configurable SDK timeouts and bounded automatic retries.
 - Supports both modern subcommands and the original `--action` syntax.
 
 ## Setup
@@ -34,6 +36,10 @@ The process environment takes precedence over `.env`. Additional optional settin
 | `CHATGPT_CLIENT_DB` | `prompts.db` | Path to local SQLite history |
 | `OPENAI_STORE_RESPONSES` | `false` | Allow OpenAI-side response storage |
 | `OPENAI_BASE_URL` | SDK default | Custom OpenAI-compatible base URL |
+| `OPENAI_TIMEOUT_SECONDS` | `120` | Per-request SDK timeout |
+| `OPENAI_MAX_RETRIES` | `2` | Bounded SDK retries with exponential backoff |
+| `OPENAI_ORGANIZATION` | — | Optional organization identifier |
+| `OPENAI_PROJECT` | — | Optional project identifier |
 | `MODEL` | — | Backward-compatible alias for `OPENAI_MODEL` |
 
 ## Usage
@@ -56,7 +62,7 @@ chatgpt-client search "SQLite"
 chatgpt-client search "SQLite" --code-only
 
 # Delete local history
-chatgpt-client clear
+chatgpt-client clear --yes
 ```
 
 You can also run `python -m chatgpt_client`. The original entry point remains available:
@@ -74,17 +80,15 @@ Use `--database PATH` or `--env-file PATH` before a modern subcommand to overrid
 The test suite uses the standard library and never calls the live API:
 
 ```bash
-python -m unittest discover -s tests -v
-python -m compileall -q chatgpt_client tests chatgpt.py
-```
-
-Optional development checks:
-
-```bash
 python -m pip install -e '.[dev]'
+pytest
 ruff check .
 mypy
+python -m build
 ```
+
+Pytest runs with branch coverage and fails below 95%. The suite uses shared fixtures and fake SDK
+adapters; it never calls the live OpenAI API.
 
 ## Architecture
 
@@ -92,7 +96,9 @@ mypy
 |---|---|
 | `config.py` | `.env` parsing and immutable settings |
 | `api.py` | Official SDK / Responses API adapter |
+| `application.py` | Use cases and dependency inversion |
 | `repository.py` | SQLite schema migration and prompt persistence |
 | `formatting.py` | Tables and code extraction |
 | `cli.py` | Argument parsing and application orchestration |
 
+CI tests Python 3.11, 3.12, and 3.13, then runs Ruff, mypy, coverage, and package builds.

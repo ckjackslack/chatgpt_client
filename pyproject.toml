@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chatgpt-client"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A small OpenAI Responses API CLI with searchable local history"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,10 @@ dependencies = ["openai>=2.0.0"]
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
     "mypy>=1.15",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
     "ruff>=0.12",
 ]
 
@@ -25,14 +28,41 @@ chatgpt-client = "chatgpt_client.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["chatgpt_client"]
 
+[tool.hatch.version]
+path = "chatgpt_client/__init__.py"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "I", "UP", "B", "C4", "PIE", "PT", "RET", "RUF", "SIM"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 packages = ["chatgpt_client"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=chatgpt_client",
+    "--cov-branch",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-fail-under=90",
+    "-ra",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["chatgpt_client"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

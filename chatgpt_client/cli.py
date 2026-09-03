@@ -2,34 +2,61 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
-from typing import Literal, TextIO
+from typing import TextIO, TypeAlias
 
 from chatgpt_client import __version__
-from chatgpt_client.api import OpenAIResponsesClient, ResponseGenerationError, TextGenerator
-from chatgpt_client.config import ConfigurationError, load_settings
+from chatgpt_client.application import ChatGPTApplication, GeneratorFactory
+from chatgpt_client.config import Settings, load_settings
+from chatgpt_client.errors import ChatGPTClientError, UsageError
 from chatgpt_client.formatting import code_snippets, render_table
-from chatgpt_client.models import NewPrompt, StoredPrompt
+from chatgpt_client.models import StoredPrompt
 from chatgpt_client.repository import PromptRepository
 
 
-Action = Literal["show", "ask", "search", "clear"]
-ClientFactory = Callable[[str, str | None], TextGenerator]
+class ExitCode(IntEnum):
+    SUCCESS = 0
+    ERROR = 1
+    USAGE = 2
 
 
 @dataclass(frozen=True, slots=True)
-class Command:
-    action: Action
-    query: str | None
-    prompt_id: int | None
-    model: str | None
-    code_only: bool
+class RuntimeOptions:
     env_file: Path
     database: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class ShowCommand:
+    options: RuntimeOptions
+    prompt_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AskCommand:
+    options: RuntimeOptions
+    query: str
+    model: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchCommand:
+    options: RuntimeOptions
+    query: str
+    code_only: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ClearCommand:
+    options: RuntimeOptions
+    confirmed: bool = False
+
+
+Command: TypeAlias = ShowCommand | AskCommand | SearchCommand | ClearCommand
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,8 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Ask OpenAI and keep a searchable local SQLite history.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--env-file", type=Path, default=Path(".env"))
-    parser.add_argument("--database", type=Path)
+    _add_runtime_options(parser)
 
     commands = parser.add_subparsers(dest="action")
     show = commands.add_parser("show", help="List history or show one entry.")
@@ -57,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print only fenced or valid Python code from matching responses.",
     )
 
-    commands.add_parser("clear", help="Delete all locally stored history.")
+    clear = commands.add_parser("clear", help="Delete all locally stored history.")
+    clear.add_argument("--yes", action="store_true", help="Confirm deletion.")
     return parser
 
 
@@ -66,18 +93,19 @@ def parse_command(argv: Sequence[str] | None = None) -> Command:
     if _uses_legacy_syntax(arguments):
         return _parse_legacy(arguments)
 
-    parser = build_parser()
-    namespace = parser.parse_args(arguments)
-    action: Action = namespace.action or "show"
-    return Command(
-        action=action,
-        query=getattr(namespace, "query", None),
-        prompt_id=getattr(namespace, "id", None),
-        model=getattr(namespace, "model", None),
-        code_only=getattr(namespace, "code_only", False),
-        env_file=namespace.env_file,
-        database=namespace.database,
-    )
+    namespace = build_parser().parse_args(arguments)
+    options = _runtime_options(namespace)
+    match namespace.action:
+        case "ask":
+            return AskCommand(options, namespace.query, namespace.model)
+        case "search":
+            return SearchCommand(options, namespace.query, namespace.code_only)
+        case "clear":
+            return ClearCommand(options, namespace.yes)
+        case "show" | None:
+            return ShowCommand(options, getattr(namespace, "id", None))
+        case action:  # pragma: no cover - argparse restricts this value
+            raise AssertionError(f"Unexpected action: {action}")
 
 
 def run(
@@ -86,91 +114,95 @@ def run(
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
     environ: Mapping[str, str] | None = None,
-    client_factory: ClientFactory | None = None,
+    generator_factory: GeneratorFactory | None = None,
 ) -> int:
     try:
         command = parse_command(argv)
-        settings = load_settings(
-            env_file=command.env_file,
-            environ=os.environ if environ is None else environ,
-            database_override=command.database,
-            model_override=command.model,
+        settings = _settings(command, os.environ if environ is None else environ)
+        application = ChatGPTApplication(
+            PromptRepository(settings.database_path),
+            generator_factory=generator_factory,
         )
-        repository = PromptRepository(settings.database_path)
-        repository.initialize()
-
-        if command.action == "ask":
-            api_key = settings.require_api_key()
-            factory = client_factory or _create_client
-            client = factory(api_key, settings.base_url)
-            generated = client.generate(
-                command.query or "",
-                model=settings.model,
-                store=settings.store_responses,
-            )
-            repository.add(
-                NewPrompt(
-                    response_id=generated.response_id,
-                    prompt=command.query or "",
-                    model=generated.model,
-                    response=generated.text,
-                )
-            )
-            print(generated.text, file=stdout)
-            return 0
-
-        if command.action == "clear":
-            deleted = repository.clear()
-            print(f"Deleted {deleted} prompt(s).", file=stdout)
-            return 0
-
-        if command.action == "search":
-            rows = repository.search(command.query or "")
-            if not rows:
-                print("No matching rows.", file=stdout)
-                return 0
-            if command.code_only:
-                return _print_code(rows, stdout)
-            print(render_table(rows), file=stdout)
-            return 0
-
-        if command.prompt_id is not None:
-            row = repository.get(command.prompt_id)
-            if row is None:
-                print(f"No prompt with id={command.prompt_id}.", file=stdout)
-                return 0
-            print(f"Q: {row.prompt}\nA: {row.response}", file=stdout)
-            return 0
-
-        rows = repository.list()
-        if not rows:
-            print("Empty database.", file=stdout)
-            return 0
-        print(render_table(rows), file=stdout)
-        return 0
-    except (ConfigurationError, ResponseGenerationError, sqlite3.Error, OSError, ValueError) as exc:
+        application.initialize()
+        return int(_execute(command, settings, application, stdout))
+    except UsageError as exc:
         print(f"error: {exc}", file=stderr)
-        return 1
+        return int(ExitCode.USAGE)
+    except ChatGPTClientError as exc:
+        print(f"error: {exc}", file=stderr)
+        return int(ExitCode.ERROR)
 
 
 def main() -> None:
     raise SystemExit(run())
 
 
-def _create_client(api_key: str, base_url: str | None) -> TextGenerator:
-    return OpenAIResponsesClient(api_key, base_url=base_url)
+def _execute(
+    command: Command,
+    settings: Settings,
+    application: ChatGPTApplication,
+    stdout: TextIO,
+) -> ExitCode:
+    match command:
+        case AskCommand(query=query):
+            stored = application.ask(query, settings)
+            print(stored.response, file=stdout)
+        case ClearCommand(confirmed=False):
+            raise UsageError("Refusing to delete history without --yes.")
+        case ClearCommand():
+            print(f"Deleted {application.clear()} prompt(s).", file=stdout)
+        case SearchCommand(query=query, code_only=True):
+            _print_code(application.search(query), stdout)
+        case SearchCommand(query=query):
+            _print_rows(application.search(query), stdout, empty="No matching rows.")
+        case ShowCommand(prompt_id=prompt_id) if prompt_id is not None:
+            _print_prompt(application.get(prompt_id), prompt_id, stdout)
+        case ShowCommand():
+            _print_rows(application.history(), stdout, empty="Empty database.")
+    return ExitCode.SUCCESS
 
 
-def _print_code(rows: Sequence[StoredPrompt], stdout: TextIO) -> int:
-    found = False
-    for row in rows:
-        snippets = code_snippets(row.response)
-        for snippet in snippets:
-            found = True
-            print(f"# Prompt {row.id}: {row.prompt}\n\n{snippet}\n", file=stdout)
-    if not found:
+def _settings(command: Command, environ: Mapping[str, str]) -> Settings:
+    model = command.model if isinstance(command, AskCommand) else None
+    return load_settings(
+        env_file=command.options.env_file,
+        environ=environ,
+        database_override=command.options.database,
+        model_override=model,
+    )
+
+
+def _print_prompt(row: StoredPrompt | None, prompt_id: int, stdout: TextIO) -> None:
+    if row is None:
+        print(f"No prompt with id={prompt_id}.", file=stdout)
+        return
+    print(f"Q: {row.prompt}\nA: {row.response}", file=stdout)
+
+
+def _print_rows(rows: Sequence[StoredPrompt], stdout: TextIO, *, empty: str) -> None:
+    print(render_table(rows) if rows else empty, file=stdout)
+
+
+def _print_code(rows: Sequence[StoredPrompt], stdout: TextIO) -> None:
+    snippets = [
+        (row, snippet)
+        for row in rows
+        for snippet in code_snippets(row.response)
+    ]
+    if not snippets:
         print("No code snippets found in matching rows.", file=stdout)
-    return 0
+        return
+    for row, snippet in snippets:
+        print(f"# Prompt {row.id}: {row.prompt}\n\n{snippet}\n", file=stdout)
+
+
+def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    parser.add_argument("--database", type=Path)
+
+
+def _runtime_options(namespace: argparse.Namespace) -> RuntimeOptions:
+    return RuntimeOptions(namespace.env_file, namespace.database)
 
 
 def _uses_legacy_syntax(arguments: Sequence[str]) -> bool:
@@ -183,23 +215,32 @@ def _uses_legacy_syntax(arguments: Sequence[str]) -> bool:
 
 def _parse_legacy(arguments: Sequence[str]) -> Command:
     parser = argparse.ArgumentParser(prog="chatgpt.py")
-    parser.add_argument("--action", choices=("show", "ask", "clear", "search"), default="show")
+    parser.add_argument(
+        "--action",
+        choices=("show", "ask", "clear", "search"),
+        default="show",
+    )
     parser.add_argument("--query")
     parser.add_argument("--id", type=int)
     parser.add_argument("--model")
-    parser.add_argument("--env-file", type=Path, default=Path(".env"))
-    parser.add_argument("--database", type=Path)
     parser.add_argument("--code-only", action="store_true")
+    parser.add_argument("--yes", action="store_true")
+    _add_runtime_options(parser)
     namespace = parser.parse_args(arguments)
-    if namespace.action in {"ask", "search"} and not namespace.query:
-        parser.error(f"--query is required for {namespace.action}")
-    return Command(
-        action=namespace.action,
-        query=namespace.query,
-        prompt_id=namespace.id,
-        model=namespace.model,
-        code_only=namespace.code_only,
-        env_file=namespace.env_file,
-        database=namespace.database,
-    )
+    options = _runtime_options(namespace)
+    match namespace.action:
+        case "ask":
+            if not namespace.query:
+                parser.error("--query is required for ask")
+            return AskCommand(options, namespace.query, namespace.model)
+        case "search":
+            if not namespace.query:
+                parser.error("--query is required for search")
+            return SearchCommand(options, namespace.query, namespace.code_only)
+        case "clear":
+            return ClearCommand(options, namespace.yes)
+        case "show":
+            return ShowCommand(options, namespace.id)
+        case action:  # pragma: no cover - argparse restricts this value
+            raise AssertionError(f"Unexpected action: {action}")
 

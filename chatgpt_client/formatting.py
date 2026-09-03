@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import ast
-import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from chatgpt_client.models import StoredPrompt
 
 
-_FENCED_BLOCK = re.compile(r"```[^\n]*\n?(.*?)```", re.DOTALL)
+@dataclass(frozen=True, slots=True)
+class Column:
+    name: str
+    width: int
+    value: Callable[[StoredPrompt], str]
+
+
+_COLUMNS = (
+    Column("id", 8, lambda row: str(row.id)),
+    Column("created_at", 19, lambda row: row.created_at),
+    Column("model", 24, lambda row: row.model),
+    Column("prompt", 40, lambda row: row.prompt),
+    Column("response", 60, lambda row: row.response),
+)
 
 
 def compact(value: str, width: int) -> str:
@@ -18,23 +31,16 @@ def compact(value: str, width: int) -> str:
 
 
 def render_table(rows: Iterable[StoredPrompt]) -> str:
-    headers = ("id", "created_at", "model", "prompt", "response")
-    limits = (8, 19, 24, 40, 60)
+    headers = tuple(column.name for column in _COLUMNS)
     values = [
-        (
-            str(row.id),
-            compact(row.created_at, limits[1]),
-            compact(row.model, limits[2]),
-            compact(row.prompt, limits[3]),
-            compact(row.response, limits[4]),
-        )
+        tuple(compact(column.value(row), column.width) for column in _COLUMNS)
         for row in rows
     ]
     widths = [
-        min(limit, max(len(header), *(len(row[index]) for row in values)))
+        min(column.width, max(len(column.name), *(len(row[index]) for row in values)))
         if values
-        else len(header)
-        for index, (header, limit) in enumerate(zip(headers, limits, strict=True))
+        else len(column.name)
+        for index, column in enumerate(_COLUMNS)
     ]
 
     def render(row: tuple[str, ...]) -> str:
@@ -48,7 +54,7 @@ def render_table(rows: Iterable[StoredPrompt]) -> str:
 
 
 def code_snippets(value: str) -> list[str]:
-    fenced = [match.strip() for match in _FENCED_BLOCK.findall(value) if match.strip()]
+    fenced = _fenced_code_blocks(value)
     if fenced:
         return fenced
     if is_valid_python(value):
@@ -62,3 +68,22 @@ def is_valid_python(value: str) -> bool:
     except SyntaxError:
         return False
     return bool(value.strip())
+
+
+def _fenced_code_blocks(value: str) -> list[str]:
+    blocks: list[str] = []
+    current: list[str] | None = None
+    for line in value.splitlines():
+        stripped = line.strip()
+        if current is None:
+            if stripped.startswith("```") and "`" not in stripped[3:]:
+                current = []
+            continue
+        if stripped == "```":
+            code = "\n".join(current).strip()
+            if code:
+                blocks.append(code)
+            current = None
+        else:
+            current.append(line)
+    return blocks

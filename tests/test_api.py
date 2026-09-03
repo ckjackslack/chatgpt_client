@@ -1,72 +1,157 @@
 from __future__ import annotations
 
 import sys
-import types
-import unittest
-from unittest.mock import patch
+from types import ModuleType
+from typing import Any
 
-from chatgpt_client.api import OpenAIResponsesClient, ResponseGenerationError
+import pytest
 
-
-class _FakeResponse:
-    id = "resp_123"
-    model = "resolved-model"
-    output_text = " generated text "
+from chatgpt_client.api import OpenAIClientConfig, OpenAIResponsesClient
+from chatgpt_client.errors import ResponseGenerationError
 
 
-class _FakeResponses:
-    def __init__(self) -> None:
-        self.arguments = None
-
-    def create(self, **kwargs):
-        self.arguments = kwargs
-        return _FakeResponse()
-
-
-class _FakeOpenAI:
-    last_instance = None
-
-    def __init__(self, **kwargs) -> None:
-        self.options = kwargs
-        self.responses = _FakeResponses()
-        _FakeOpenAI.last_instance = self
+class FakeOpenAIError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.request_id = request_id
+        self.status_code = status_code
 
 
-class APIClientTests(unittest.TestCase):
-    def test_generate_uses_responses_api_and_explicit_storage_setting(self) -> None:
-        fake_module = types.SimpleNamespace(OpenAI=_FakeOpenAI, OpenAIError=RuntimeError)
-        with patch.dict(sys.modules, {"openai": fake_module}):
-            client = OpenAIResponsesClient("secret")
-            result = client.generate("hello", model="chosen-model", store=False)
-
-        instance = _FakeOpenAI.last_instance
-        self.assertEqual(
-            instance.responses.arguments,
-            {"model": "chosen-model", "input": "hello", "store": False},
-        )
-        self.assertEqual(result.response_id, "resp_123")
-        self.assertEqual(result.model, "resolved-model")
-        self.assertEqual(result.text, "generated text")
-
-    def test_empty_text_is_rejected(self) -> None:
-        class EmptyResponse(_FakeResponse):
-            output_text = "  "
-
-        class EmptyResponses(_FakeResponses):
-            def create(self, **kwargs):
-                return EmptyResponse()
-
-        class EmptyOpenAI(_FakeOpenAI):
-            def __init__(self, **kwargs) -> None:
-                self.responses = EmptyResponses()
-
-        fake_module = types.SimpleNamespace(OpenAI=EmptyOpenAI, OpenAIError=RuntimeError)
-        with patch.dict(sys.modules, {"openai": fake_module}):
-            client = OpenAIResponsesClient("secret")
-            with self.assertRaises(ResponseGenerationError):
-                client.generate("hello", model="model")
+class FakeResponse:
+    id: object = "resp_123"
+    _request_id: object = "req_123"
+    model: object = "resolved-model"
+    output_text: object = " generated text "
 
 
-if __name__ == "__main__":
-    unittest.main()
+class ResponsesEndpoint:
+    def __init__(self, response: object | None = None, error: Exception | None = None) -> None:
+        self.response = response or FakeResponse()
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return self.response
+
+
+class SDKHarness:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        response: object | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.endpoint = ResponsesEndpoint(response, error)
+        self.options: dict[str, Any] | None = None
+        harness = self
+
+        class OpenAI:
+            def __init__(self, **options: Any) -> None:
+                harness.options = options
+                self.responses = harness.endpoint
+
+        module = ModuleType("openai")
+        module.OpenAI = OpenAI  # type: ignore[attr-defined]
+        module.OpenAIError = FakeOpenAIError  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "openai", module)
+
+
+def test_client_configuration_and_responses_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk = SDKHarness(monkeypatch)
+    config = OpenAIClientConfig(
+        api_key="secret",
+        base_url="https://example.test/v1",
+        timeout_seconds=42,
+        max_retries=3,
+        organization="org_test",
+        project="project_test",
+    )
+
+    result = OpenAIResponsesClient(config).generate(
+        "hello",
+        model="chosen-model",
+        store=False,
+    )
+
+    assert sdk.options == {
+        "api_key": "secret",
+        "base_url": "https://example.test/v1",
+        "timeout": 42,
+        "max_retries": 3,
+        "organization": "org_test",
+        "project": "project_test",
+    }
+    assert sdk.endpoint.calls == [
+        {"model": "chosen-model", "input": "hello", "store": False}
+    ]
+    assert result.response_id == "resp_123"
+    assert result.request_id == "req_123"
+    assert result.model == "resolved-model"
+    assert result.text == "generated text"
+
+
+def test_optional_sdk_options_are_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk = SDKHarness(monkeypatch)
+    OpenAIResponsesClient(OpenAIClientConfig(api_key="secret"))
+    assert sdk.options == {"api_key": "secret", "timeout": 120.0, "max_retries": 2}
+
+
+@pytest.mark.parametrize(("prompt", "model"), [("", "model"), ("  ", "model"), ("hi", "")])
+def test_empty_input_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    prompt: str,
+    model: str,
+) -> None:
+    sdk = SDKHarness(monkeypatch)
+    client = OpenAIResponsesClient(OpenAIClientConfig(api_key="secret"))
+    with pytest.raises(ResponseGenerationError, match="must not be empty"):
+        client.generate(prompt, model=model)
+    assert sdk.endpoint.calls == []
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "message"),
+    [
+        ("output_text", None, "without text output"),
+        ("output_text", "  ", "without text output"),
+        ("id", None, "without an id"),
+        ("id", 123, "without an id"),
+    ],
+)
+def test_malformed_sdk_response_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    attribute: str,
+    value: object,
+    message: str,
+) -> None:
+    response = FakeResponse()
+    setattr(response, attribute, value)
+    SDKHarness(monkeypatch, response=response)
+    client = OpenAIResponsesClient(OpenAIClientConfig(api_key="secret"))
+    with pytest.raises(ResponseGenerationError, match=message):
+        client.generate("hello", model="model")
+
+
+def test_sdk_error_preserves_diagnostic_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    failure = FakeOpenAIError("rate limited", request_id="req_failed", status_code=429)
+    SDKHarness(monkeypatch, error=failure)
+    client = OpenAIResponsesClient(OpenAIClientConfig(api_key="secret"))
+
+    with pytest.raises(ResponseGenerationError) as raised:
+        client.generate("hello", model="model")
+
+    assert raised.value.request_id == "req_failed"
+    assert raised.value.status_code == 429
+    assert "status=429" in str(raised.value)
+    assert "request_id=req_failed" in str(raised.value)
 

@@ -1,77 +1,146 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
-import unittest
 from pathlib import Path
 
+import pytest
+
+from chatgpt_client.errors import RepositoryError
 from chatgpt_client.models import NewPrompt
-from chatgpt_client.repository import PromptRepository
+from chatgpt_client.repository import SCHEMA_VERSION, PromptRepository
+from tests.helpers import PromptFactory
 
 
-class PromptRepositoryTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temp_directory = tempfile.TemporaryDirectory()
-        self.database = Path(self.temp_directory.name, "prompts.db")
-        self.repository = PromptRepository(self.database)
-        self.repository.initialize()
+def test_add_get_list_and_clear(
+    repository: PromptRepository,
+    prompt_factory: PromptFactory,
+) -> None:
+    first = prompt_factory(prompt="first", request_id="req_1")
+    second = prompt_factory(prompt="second", request_id=None)
 
-    def tearDown(self) -> None:
-        self.temp_directory.cleanup()
-
-    def add(self, prompt: str = "question", response: str = "answer") -> int:
-        return self.repository.add(
-            NewPrompt(
-                response_id="resp_123",
-                prompt=prompt,
-                model="test-model",
-                response=response,
-            )
-        ).id
-
-    def test_add_get_list_search_and_clear(self) -> None:
-        prompt_id = self.add("Where is the fish?", "The fish is here.")
-        self.add("Unrelated", "Nothing to see")
-
-        self.assertEqual(self.repository.get(prompt_id).prompt, "Where is the fish?")
-        self.assertEqual(len(self.repository.list()), 2)
-        self.assertEqual([row.id for row in self.repository.search("FISH")], [prompt_id])
-        self.assertEqual(self.repository.clear(), 2)
-        self.assertEqual(self.repository.list(), [])
-
-    def test_search_treats_sql_wildcards_as_literals(self) -> None:
-        percent_id = self.add("100%", "percent")
-        self.add("1000", "number")
-        self.assertEqual([row.id for row in self.repository.search("%")], [percent_id])
-
-    def test_existing_table_without_key_is_migrated_without_data_loss(self) -> None:
-        legacy_database = Path(self.temp_directory.name, "legacy.db")
-        with sqlite3.connect(legacy_database) as connection:
-            connection.execute(
-                """
-                CREATE TABLE prompts (
-                    id INTEGER PRIMARY KEY,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    prompt TEXT,
-                    model TEXT,
-                    response TEXT
-                )
-                """
-            )
-            connection.execute(
-                "INSERT INTO prompts (prompt, model, response) VALUES (?, ?, ?)",
-                ("old question", "old model", "old answer"),
-            )
-
-        repository = PromptRepository(legacy_database)
-        repository.initialize()
-
-        self.assertEqual(repository.list()[0].prompt, "old question")
-        with sqlite3.connect(legacy_database) as connection:
-            columns = {row[1] for row in connection.execute("PRAGMA table_info(prompts)")}
-        self.assertIn("key", columns)
+    assert repository.get(first.id) == first
+    assert repository.get(999_999) is None
+    assert repository.list_all() == [second, first]
+    assert repository.list_all(limit=1) == [second]
+    assert repository.clear() == 2
+    assert repository.list_all() == []
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("limit", [0, -1])
+def test_list_rejects_invalid_limit(repository: PromptRepository, limit: int) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        repository.list_all(limit=limit)
 
+
+@pytest.mark.parametrize(
+    ("query", "matching_prompt"),
+    [
+        ("FISH", "Where is the fish?"),
+        ("%", "100% complete"),
+        ("_", "snake_case"),
+        (r"C:\\", r"C:\\temp"),
+    ],
+)
+def test_search_is_case_insensitive_and_treats_wildcards_as_literals(
+    repository: PromptRepository,
+    prompt_factory: PromptFactory,
+    query: str,
+    matching_prompt: str,
+) -> None:
+    expected = prompt_factory(prompt=matching_prompt)
+    prompt_factory(prompt="unrelated")
+    assert repository.search(query) == [expected]
+
+
+def test_search_matches_response(
+    repository: PromptRepository,
+    prompt_factory: PromptFactory,
+) -> None:
+    expected = prompt_factory(prompt="question", response="needle in response")
+    assert repository.search("needle") == [expected]
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_search_rejects_empty_query(repository: PromptRepository, query: str) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        repository.search(query)
+
+
+def test_initialize_creates_parent_directory(tmp_path: Path) -> None:
+    database = tmp_path / "nested" / "history.db"
+    repository = PromptRepository(database)
+    repository.initialize()
+    assert database.is_file()
+
+
+def test_legacy_schema_is_migrated_without_data_loss(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.db"
+    fixture = Path(__file__).parent / "fixtures" / "legacy_prompts.sql"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(fixture.read_text(encoding="utf-8"))
+
+    repository = PromptRepository(database)
+    repository.initialize()
+
+    stored = repository.list_all()[0]
+    assert stored.prompt == "old question"
+    assert stored.response_id == ""
+    assert stored.request_id is None
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(prompts)")}
+    assert version == SCHEMA_VERSION
+    assert {"key", "request_id"} <= columns
+
+
+def test_initialize_is_idempotent(
+    repository: PromptRepository,
+    prompt_factory: PromptFactory,
+) -> None:
+    stored = prompt_factory()
+    repository.initialize()
+    assert repository.list_all() == [stored]
+
+
+def test_newer_schema_version_is_rejected(tmp_path: Path) -> None:
+    database = tmp_path / "future.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+
+    with pytest.raises(RepositoryError, match="newer than supported"):
+        PromptRepository(database).initialize()
+
+
+def test_malformed_legacy_schema_is_rejected(tmp_path: Path) -> None:
+    database = tmp_path / "malformed.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE prompts (id INTEGER PRIMARY KEY)")
+
+    with pytest.raises(RepositoryError, match="missing required columns"):
+        PromptRepository(database).initialize()
+
+
+def test_sqlite_errors_are_wrapped_with_database_context(tmp_path: Path) -> None:
+    database_directory = tmp_path / "directory.db"
+    database_directory.mkdir()
+    with pytest.raises(RepositoryError, match="SQLite operation failed"):
+        PromptRepository(database_directory).initialize()
+
+
+def test_request_id_round_trip(repository: PromptRepository) -> None:
+    stored = repository.add(
+        NewPrompt(
+            response_id="resp_123",
+            request_id="req_123",
+            prompt="question",
+            model="model",
+            response="answer",
+        )
+    )
+    assert stored.request_id == "req_123"
+
+
+def test_wal_mode_is_enabled(repository: PromptRepository) -> None:
+    with sqlite3.connect(repository.database_path) as connection:
+        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode == "wal"

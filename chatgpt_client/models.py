@@ -8,6 +8,7 @@ class GeneratedResponse:
     """Text returned by OpenAI before it is persisted."""
 
     response_id: str
+    request_id: str | None
     model: str
     text: str
 
@@ -17,9 +18,20 @@ class NewPrompt:
     """A prompt/response pair ready to be persisted."""
 
     response_id: str
+    request_id: str | None
     prompt: str
     model: str
     response: str
+
+    @classmethod
+    def from_generated(cls, prompt: str, generated: GeneratedResponse) -> NewPrompt:
+        return cls(
+            response_id=generated.response_id,
+            request_id=generated.request_id,
+            prompt=prompt,
+            model=generated.model,
+            response=generated.text,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +41,7 @@ class StoredPrompt:
     id: int
     created_at: str
     response_id: str
+    request_id: str | None
     prompt: str
     model: str
     response: str
-
