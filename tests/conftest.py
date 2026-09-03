@@ -18,8 +18,8 @@ from tests.helpers import (
     FakeGenerator,
     FakeGeneratorFactory,
     PromptFactory,
-    SQLDatabaseFactory,
     SettingsFactory,
+    SQLDatabaseFactory,
     sqlite_connection,
 )
 
