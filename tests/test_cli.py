@@ -166,3 +166,35 @@ def test_legacy_action_syntax_remains_executable(cli_runner: CLIRunner) -> None:
     result = cli_runner("--action", "show")
     assert result.exit_code == 0
     assert result.stdout == "Empty database.\n"
+
+
+def test_verbose_mode_reports_sanitized_configuration_and_request_ids(
+    cli_runner: CLIRunner,
+) -> None:
+    result = cli_runner(
+        "--verbose",
+        "ask",
+        "Hello",
+        environ={
+            "OPENAI_API_KEY": "top-secret",
+            "OPENAI_ORGANIZATION": "org-secret",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert "[debug] api_key=configured" in result.stderr
+    assert "[debug] response_id=resp_test" in result.stderr
+    assert "[debug] request_id=req_test" in result.stderr
+    assert "top-secret" not in result.stderr
+    assert "org-secret" not in result.stderr
+
+
+def test_keyboard_interrupt_uses_shell_conventional_exit_code(
+    cli_runner: CLIRunner,
+    fake_generator: FakeGenerator,
+) -> None:
+    fake_generator.error = KeyboardInterrupt()
+    result = cli_runner("ask", "Hello", environ={"OPENAI_API_KEY": "secret"})
+    assert result.exit_code == 130
+    assert result.stdout == ""
+    assert result.stderr == "error: interrupted.\n"

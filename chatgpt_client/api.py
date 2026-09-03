@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Protocol
 
@@ -10,7 +10,7 @@ from chatgpt_client.models import GeneratedResponse
 
 @dataclass(frozen=True, slots=True)
 class OpenAIClientConfig:
-    api_key: str
+    api_key: str = field(repr=False)
     base_url: str | None = None
     timeout_seconds: float = 120.0
     max_retries: int = 2
@@ -74,11 +74,17 @@ class OpenAIResponsesClient:
         output_text = getattr(response, "output_text", None)
         text = output_text.strip() if isinstance(output_text, str) else ""
         if not text:
-            raise ResponseGenerationError("OpenAI returned a response without text output.")
+            raise ResponseGenerationError(
+                "OpenAI returned a response without text output.",
+                request_id=_string_attribute(response, "_request_id"),
+            )
 
         response_id = _string_attribute(response, "id")
         if not response_id:
-            raise ResponseGenerationError("OpenAI returned a response without an id.")
+            raise ResponseGenerationError(
+                "OpenAI returned a response without an id.",
+                request_id=_string_attribute(response, "_request_id"),
+            )
 
         return GeneratedResponse(
             response_id=response_id,

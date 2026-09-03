@@ -106,6 +106,10 @@ def test_optional_sdk_options_are_omitted(monkeypatch: pytest.MonkeyPatch) -> No
     assert sdk.options == {"api_key": "secret", "timeout": 120.0, "max_retries": 2}
 
 
+def test_client_config_repr_does_not_expose_api_key() -> None:
+    assert "top-secret" not in repr(OpenAIClientConfig(api_key="top-secret"))
+
+
 @pytest.mark.parametrize(("prompt", "model"), [("", "model"), ("  ", "model"), ("hi", "")])
 def test_empty_input_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
@@ -142,6 +146,28 @@ def test_malformed_sdk_response_is_rejected(
         client.generate("hello", model="model")
 
 
+@pytest.mark.parametrize(
+    ("attribute", "value"),
+    [("output_text", None), ("id", None)],
+)
+def test_malformed_response_preserves_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+    attribute: str,
+    value: object,
+) -> None:
+    response = FakeResponse()
+    setattr(response, attribute, value)
+    SDKHarness(monkeypatch, response=response)
+
+    with pytest.raises(ResponseGenerationError) as raised:
+        OpenAIResponsesClient(OpenAIClientConfig(api_key="secret")).generate(
+            "hello",
+            model="model",
+        )
+
+    assert raised.value.request_id == "req_123"
+
+
 def test_sdk_error_preserves_diagnostic_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     failure = FakeOpenAIError("rate limited", request_id="req_failed", status_code=429)
     SDKHarness(monkeypatch, error=failure)
@@ -154,4 +180,3 @@ def test_sdk_error_preserves_diagnostic_fields(monkeypatch: pytest.MonkeyPatch) 
     assert raised.value.status_code == 429
     assert "status=429" in str(raised.value)
     assert "request_id=req_failed" in str(raised.value)
-

@@ -7,7 +7,7 @@ import pytest
 from chatgpt_client.errors import RepositoryError
 from chatgpt_client.models import NewPrompt
 from chatgpt_client.repository import SCHEMA_VERSION, PromptRepository
-from tests.helpers import PromptFactory, sqlite_connection
+from tests.helpers import PromptFactory, SQLDatabaseFactory, sqlite_connection
 
 
 def test_add_get_list_and_clear(
@@ -38,6 +38,7 @@ def test_list_rejects_invalid_limit(repository: PromptRepository, limit: int) ->
         ("%", "100% complete"),
         ("_", "snake_case"),
         (r"C:\\", r"C:\\temp"),
+        ("ŻÓŁĆ", "Zażółć gęślą jaźń"),
     ],
 )
 def test_search_is_case_insensitive_and_treats_wildcards_as_literals(
@@ -72,18 +73,26 @@ def test_initialize_creates_parent_directory(tmp_path: Path) -> None:
     assert database.is_file()
 
 
-def test_legacy_schema_is_migrated_without_data_loss(tmp_path: Path) -> None:
-    database = tmp_path / "legacy.db"
-    fixture = Path(__file__).parent / "fixtures" / "legacy_prompts.sql"
-    with sqlite_connection(database) as connection:
-        connection.executescript(fixture.read_text(encoding="utf-8"))
-
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_prompt", "expected_response_id"),
+    [
+        ("legacy_prompts.sql", "old question", ""),
+        ("schema_v1.sql", "version one question", "resp_v1"),
+    ],
+)
+def test_historical_schemas_are_migrated_without_data_loss(
+    sql_database_factory: SQLDatabaseFactory,
+    fixture_name: str,
+    expected_prompt: str,
+    expected_response_id: str,
+) -> None:
+    database = sql_database_factory(fixture_name)
     repository = PromptRepository(database)
     repository.initialize()
 
     stored = repository.list_all()[0]
-    assert stored.prompt == "old question"
-    assert stored.response_id == ""
+    assert stored.prompt == expected_prompt
+    assert stored.response_id == expected_response_id
     assert stored.request_id is None
     with sqlite_connection(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -124,6 +133,31 @@ def test_sqlite_errors_are_wrapped_with_database_context(tmp_path: Path) -> None
     database_directory.mkdir()
     with pytest.raises(RepositoryError, match="SQLite operation failed"):
         PromptRepository(database_directory).initialize()
+
+
+def test_corrupted_database_is_reported_with_context(tmp_path: Path) -> None:
+    database = tmp_path / "corrupted.db"
+    database.write_bytes(b"this is not a SQLite database")
+
+    with pytest.raises(RepositoryError, match=r"SQLite operation failed.*corrupted\.db"):
+        PromptRepository(database).initialize()
+
+
+def test_locked_database_obeys_configured_timeout(
+    repository: PromptRepository,
+    database_path: Path,
+) -> None:
+    prompt = NewPrompt("resp", "req", "question", "model", "answer")
+    with sqlite_connection(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        with pytest.raises(RepositoryError, match="database is locked"):
+            PromptRepository(database_path, timeout_seconds=0.01).add(prompt)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_invalid_database_timeout_is_rejected(tmp_path: Path, timeout: float) -> None:
+    with pytest.raises(ValueError, match="finite number greater than zero"):
+        PromptRepository(tmp_path / "history.db", timeout_seconds=timeout)
 
 
 def test_request_id_round_trip(repository: PromptRepository) -> None:

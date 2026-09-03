@@ -30,7 +30,7 @@ class FakeGenerator:
             text="A generated answer",
         )
     )
-    error: Exception | None = None
+    error: BaseException | None = None
     calls: list[GenerationCall] = field(default_factory=list)
 
     def generate(self, prompt: str, *, model: str, store: bool = False) -> GeneratedResponse:
@@ -80,6 +80,10 @@ class PromptFactory(Protocol):
 
 class SettingsFactory(Protocol):
     def __call__(self, **overrides: object) -> Settings: ...
+
+
+class SQLDatabaseFactory(Protocol):
+    def __call__(self, fixture_name: str) -> Path: ...
 
 
 @contextmanager

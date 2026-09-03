@@ -34,6 +34,7 @@ The process environment takes precedence over `.env`. Additional optional settin
 | Variable | Default | Purpose |
 |---|---|---|
 | `CHATGPT_CLIENT_DB` | `prompts.db` | Path to local SQLite history |
+| `CHATGPT_CLIENT_DB_TIMEOUT_SECONDS` | `5` | Maximum wait for a SQLite lock |
 | `OPENAI_STORE_RESPONSES` | `false` | Allow OpenAI-side response storage |
 | `OPENAI_BASE_URL` | SDK default | Custom OpenAI-compatible base URL |
 | `OPENAI_TIMEOUT_SECONDS` | `120` | Per-request SDK timeout |
@@ -74,21 +75,37 @@ python chatgpt.py --action search --query "fish"
 ```
 
 Use `--database PATH` or `--env-file PATH` before a modern subcommand to override those paths.
+Add `--verbose` before the subcommand to print effective secret-free settings and request IDs to
+standard error:
+
+```bash
+chatgpt-client --verbose ask "Explain SQLite WAL mode"
+```
 
 ## Development
 
-The test suite uses the standard library and never calls the live API:
+The default test suite never calls the live API:
 
 ```bash
 python -m pip install -e '.[dev]'
 pytest
 ruff check .
 mypy
+python -m pip_audit --local --skip-editable
 python -m build
 ```
 
-Pytest runs with branch coverage and fails below 95%. The suite uses shared fixtures and fake SDK
-adapters; it never calls the live OpenAI API.
+Pytest runs with branch coverage and fails below 95%. Unit tests use shared fixtures and fake SDK
+adapters. A single opt-in live contract test is available separately:
+
+```bash
+RUN_OPENAI_INTEGRATION_TESTS=1 OPENAI_API_KEY=... pytest \
+  -o addopts="--strict-config --strict-markers -ra" \
+  -m integration tests/integration
+```
+
+This request uses `store=false`, disables retries, and still incurs a small API charge. GitHub's
+manual `Live OpenAI integration` workflow runs the same test through a protected environment.
 
 ## Architecture
 
@@ -99,6 +116,10 @@ adapters; it never calls the live OpenAI API.
 | `application.py` | Use cases and dependency inversion |
 | `repository.py` | SQLite schema migration and prompt persistence |
 | `formatting.py` | Tables and code extraction |
+| `diagnostics.py` | Secret-free runtime and request diagnostics |
 | `cli.py` | Argument parsing and application orchestration |
 
-CI tests Python 3.11, 3.12, and 3.13, then runs Ruff, mypy, coverage, and package builds.
+CI tests Python 3.11, 3.12, and 3.13, then runs Ruff, mypy, package validation, and an
+installed-wheel smoke test. Releases are published from GitHub Releases through PyPI trusted
+publishing, provided that the release tag exactly matches the package version (for example,
+`v0.3.0rc1`). See [CHANGELOG.md](CHANGELOG.md) for release notes.

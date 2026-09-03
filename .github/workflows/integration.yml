@@ -1,0 +1,32 @@
+name: Live OpenAI integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    environment: openai-integration
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_TEST_MODEL: ${{ vars.OPENAI_TEST_MODEL }}
+      RUN_OPENAI_INTEGRATION_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Require an integration API key
+        run: test -n "$OPENAI_API_KEY"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - name: Run the live contract test
+        run: >-
+          pytest
+          -o addopts="--strict-config --strict-markers -ra"
+          -m integration
+          tests/integration

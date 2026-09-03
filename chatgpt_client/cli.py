@@ -12,6 +12,11 @@ from typing import TextIO, TypeAlias
 from chatgpt_client import __version__
 from chatgpt_client.application import ChatGPTApplication, GeneratorFactory
 from chatgpt_client.config import Settings, load_settings
+from chatgpt_client.diagnostics import (
+    configuration_diagnostics,
+    render_diagnostics,
+    response_diagnostics,
+)
 from chatgpt_client.errors import ChatGPTClientError, UsageError
 from chatgpt_client.formatting import code_snippets, render_table
 from chatgpt_client.models import StoredPrompt
@@ -22,12 +27,14 @@ class ExitCode(IntEnum):
     SUCCESS = 0
     ERROR = 1
     USAGE = 2
+    INTERRUPTED = 130
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeOptions:
     env_file: Path
     database: Path | None
+    verbose: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,18 +126,26 @@ def run(
     try:
         command = parse_command(argv)
         settings = _settings(command, os.environ if environ is None else environ)
+        if command.options.verbose:
+            _print_diagnostics(configuration_diagnostics(settings), stderr)
         application = ChatGPTApplication(
-            PromptRepository(settings.database_path),
+            PromptRepository(
+                settings.database_path,
+                timeout_seconds=settings.database_timeout_seconds,
+            ),
             generator_factory=generator_factory,
         )
         application.initialize()
-        return int(_execute(command, settings, application, stdout))
+        return int(_execute(command, settings, application, stdout, stderr))
     except UsageError as exc:
         print(f"error: {exc}", file=stderr)
         return int(ExitCode.USAGE)
     except ChatGPTClientError as exc:
         print(f"error: {exc}", file=stderr)
         return int(ExitCode.ERROR)
+    except KeyboardInterrupt:
+        print("error: interrupted.", file=stderr)
+        return int(ExitCode.INTERRUPTED)
 
 
 def main() -> None:
@@ -142,11 +157,14 @@ def _execute(
     settings: Settings,
     application: ChatGPTApplication,
     stdout: TextIO,
+    stderr: TextIO,
 ) -> ExitCode:
     match command:
         case AskCommand(query=query):
             stored = application.ask(query, settings)
             print(stored.response, file=stdout)
+            if command.options.verbose:
+                _print_diagnostics(response_diagnostics(stored), stderr)
         case ClearCommand(confirmed=False):
             raise UsageError("Refusing to delete history without --yes.")
         case ClearCommand():
@@ -196,13 +214,18 @@ def _print_code(rows: Sequence[StoredPrompt], stdout: TextIO) -> None:
         print(f"# Prompt {row.id}: {row.prompt}\n\n{snippet}\n", file=stdout)
 
 
+def _print_diagnostics(values: Sequence[str], stderr: TextIO) -> None:
+    print(render_diagnostics(values), file=stderr)
+
+
 def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--database", type=Path)
+    parser.add_argument("--verbose", action="store_true")
 
 
 def _runtime_options(namespace: argparse.Namespace) -> RuntimeOptions:
-    return RuntimeOptions(namespace.env_file, namespace.database)
+    return RuntimeOptions(namespace.env_file, namespace.database, namespace.verbose)
 
 
 def _uses_legacy_syntax(arguments: Sequence[str]) -> bool:
@@ -243,4 +266,3 @@ def _parse_legacy(arguments: Sequence[str]) -> Command:
             return ShowCommand(options, namespace.id)
         case action:  # pragma: no cover - argparse restricts this value
             raise AssertionError(f"Unexpected action: {action}")
-

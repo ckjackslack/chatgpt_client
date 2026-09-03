@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from chatgpt_client.config import (
+    DEFAULT_DATABASE_TIMEOUT_SECONDS,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT_SECONDS,
@@ -31,6 +32,9 @@ def test_false_boolean_values(value: str) -> None:
         ("OPENAI_TIMEOUT_SECONDS", "never", "must be a number"),
         ("OPENAI_TIMEOUT_SECONDS", "0", "greater than zero"),
         ("OPENAI_TIMEOUT_SECONDS", "-1", "greater than zero"),
+        ("OPENAI_TIMEOUT_SECONDS", "nan", "finite number"),
+        ("OPENAI_TIMEOUT_SECONDS", "inf", "finite number"),
+        ("CHATGPT_CLIENT_DB_TIMEOUT_SECONDS", "0", "greater than zero"),
         ("OPENAI_MAX_RETRIES", "1.5", "must be an integer"),
         ("OPENAI_MAX_RETRIES", "-1", "zero or greater"),
     ],
@@ -68,6 +72,7 @@ def test_legacy_model_alias_and_defaults() -> None:
     assert load_settings(environ={"MODEL": "legacy"}).model == "legacy"
     defaults = load_settings(environ={})
     assert defaults.model == DEFAULT_MODEL
+    assert defaults.database_timeout_seconds == DEFAULT_DATABASE_TIMEOUT_SECONDS
     assert defaults.timeout_seconds == DEFAULT_TIMEOUT_SECONDS
     assert defaults.max_retries == DEFAULT_MAX_RETRIES
 
@@ -80,6 +85,7 @@ def test_client_options_are_parsed_and_trimmed() -> None:
             "OPENAI_BASE_URL": " https://example.test/v1 ",
             "OPENAI_ORGANIZATION": " org_test ",
             "OPENAI_PROJECT": " project_test ",
+            "CHATGPT_CLIENT_DB_TIMEOUT_SECONDS": "0.25",
         }
     )
     assert settings.timeout_seconds == 45.5
@@ -87,6 +93,7 @@ def test_client_options_are_parsed_and_trimmed() -> None:
     assert settings.base_url == "https://example.test/v1"
     assert settings.organization == "org_test"
     assert settings.project == "project_test"
+    assert settings.database_timeout_seconds == 0.25
 
 
 def test_read_env_file_supports_bom_export_quotes_and_embedded_equals(tmp_path: Path) -> None:
@@ -116,3 +123,7 @@ def test_require_api_key() -> None:
     with pytest.raises(ConfigurationError, match="Missing OPENAI_API_KEY"):
         settings.require_api_key()
 
+
+def test_settings_repr_does_not_expose_api_key() -> None:
+    settings = load_settings(environ={"OPENAI_API_KEY": "top-secret"})
+    assert "top-secret" not in repr(settings)

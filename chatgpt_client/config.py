@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from chatgpt_client.errors import ConfigurationError
 
 DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_DATABASE = Path("prompts.db")
+DEFAULT_DATABASE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_RETRIES = 2
 _ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -16,9 +18,10 @@ _ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     model: str
     database_path: Path
+    database_timeout_seconds: float = DEFAULT_DATABASE_TIMEOUT_SECONDS
     store_responses: bool = False
     base_url: str | None = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
@@ -87,6 +90,13 @@ def load_settings(
         api_key=_optional(values.get("OPENAI_API_KEY")),
         model=model,
         database_path=database_path,
+        database_timeout_seconds=_parse_positive_float(
+            "CHATGPT_CLIENT_DB_TIMEOUT_SECONDS",
+            values.get(
+                "CHATGPT_CLIENT_DB_TIMEOUT_SECONDS",
+                str(DEFAULT_DATABASE_TIMEOUT_SECONDS),
+            ),
+        ),
         store_responses=_parse_bool(values.get("OPENAI_STORE_RESPONSES", "false")),
         base_url=_optional(values.get("OPENAI_BASE_URL")),
         timeout_seconds=_parse_positive_float(
@@ -118,8 +128,8 @@ def _parse_positive_float(name: str, value: str) -> float:
         parsed = float(value)
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be a number.") from exc
-    if parsed <= 0:
-        raise ConfigurationError(f"{name} must be greater than zero.")
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ConfigurationError(f"{name} must be a finite number greater than zero.")
     return parsed
 
 

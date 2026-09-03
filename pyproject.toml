@@ -11,15 +11,33 @@ requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Maniak Root", email = "maniakroot@gmail.com" }]
-dependencies = ["openai>=2.0.0"]
+keywords = ["cli", "openai", "responses-api", "sqlite"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = ["openai>=2.0.0,<3"]
+
+[project.urls]
+Homepage = "https://github.com/ckjackslack/chatgpt_client"
+Issues = "https://github.com/ckjackslack/chatgpt_client/issues"
+Repository = "https://github.com/ckjackslack/chatgpt_client"
 
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
     "mypy>=1.15",
+    "pip-audit>=2.9",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "ruff>=0.12",
+    "twine>=6.1",
 ]
 
 [project.scripts]
@@ -50,10 +68,13 @@ addopts = [
     "--cov=chatgpt_client",
     "--cov-branch",
     "--cov-report=term-missing:skip-covered",
-    "--cov-fail-under=90",
+    "--cov-fail-under=95",
     "-ra",
 ]
 testpaths = ["tests"]
+markers = [
+    "integration: opt-in tests that call the live OpenAI API",
+]
 
 [tool.coverage.run]
 branch = true
@@ -66,3 +87,4 @@ exclude_also = [
     "raise AssertionError",
     "raise NotImplementedError",
 ]
+fail_under = 95

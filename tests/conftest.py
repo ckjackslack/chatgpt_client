@@ -18,13 +18,30 @@ from tests.helpers import (
     FakeGenerator,
     FakeGeneratorFactory,
     PromptFactory,
+    SQLDatabaseFactory,
     SettingsFactory,
+    sqlite_connection,
 )
 
 
 @pytest.fixture
 def database_path(tmp_path: Path) -> Path:
     return tmp_path / "history.db"
+
+
+@pytest.fixture
+def sql_database_factory(tmp_path: Path) -> SQLDatabaseFactory:
+    fixtures = Path(__file__).parent / "fixtures"
+
+    def create(fixture_name: str) -> Path:
+        database = tmp_path / f"{Path(fixture_name).stem}.db"
+        with sqlite_connection(database) as connection:
+            connection.executescript(
+                (fixtures / fixture_name).read_text(encoding="utf-8")
+            )
+        return database
+
+    return create
 
 
 @pytest.fixture

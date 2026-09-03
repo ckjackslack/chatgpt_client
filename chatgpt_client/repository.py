@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from math import ceil, isfinite
 from pathlib import Path
 from typing import cast
 
@@ -27,19 +28,29 @@ _SELECT_PROMPTS = """
 class PromptRepository:
     """SQLite persistence boundary for prompt history."""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        timeout_seconds: float = SQLITE_TIMEOUT_SECONDS,
+    ) -> None:
+        if not isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a finite number greater than zero")
         self.database_path = database_path
+        self.timeout_seconds = timeout_seconds
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         try:
             connection = sqlite3.connect(
                 self.database_path,
-                timeout=SQLITE_TIMEOUT_SECONDS,
+                timeout=self.timeout_seconds,
             )
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA busy_timeout = 5000")
+            busy_timeout_ms = max(1, ceil(self.timeout_seconds * 1_000))
+            connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
             connection.execute("PRAGMA foreign_keys = ON")
+            connection.create_function("CASEFOLD", 1, _casefold, deterministic=True)
             try:
                 yield connection
             finally:
@@ -71,6 +82,7 @@ class PromptRepository:
                     _MIGRATIONS[target_version](connection)
                     connection.execute(f"PRAGMA user_version = {target_version}")
                 _validate_schema(connection)
+                _validate_integrity(connection)
 
     def add(self, prompt: NewPrompt) -> StoredPrompt:
         with self._connect() as connection, connection:
@@ -118,13 +130,13 @@ class PromptRepository:
     def search(self, query: str) -> list[StoredPrompt]:
         if not query.strip():
             raise ValueError("query must not be empty")
-        pattern = f"%{_escape_like(query)}%"
+        pattern = f"%{_escape_like(query.casefold())}%"
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
                 {_SELECT_PROMPTS}
-                WHERE prompt COLLATE NOCASE LIKE ? ESCAPE '\\'
-                   OR response COLLATE NOCASE LIKE ? ESCAPE '\\'
+                WHERE CASEFOLD(prompt) LIKE ? ESCAPE '\\'
+                   OR CASEFOLD(response) LIKE ? ESCAPE '\\'
                 ORDER BY created_at DESC, id DESC
                 """,
                 (pattern, pattern),
@@ -191,6 +203,13 @@ def _schema_version(connection: sqlite3.Connection) -> int:
     return int(connection.execute("PRAGMA user_version").fetchone()[0])
 
 
+def _validate_integrity(connection: sqlite3.Connection) -> None:
+    results = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
+    if results != ["ok"]:
+        details = "; ".join(results) if results else "no result"
+        raise RepositoryError(f"Database integrity check failed: {details}.")
+
+
 def _column_names(connection: sqlite3.Connection) -> set[str]:
     return {
         cast(str, row["name"])
@@ -200,6 +219,10 @@ def _column_names(connection: sqlite3.Connection) -> set[str]:
 
 def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _casefold(value: str | None) -> str:
+    return value.casefold() if value is not None else ""
 
 
 def _to_prompt(row: sqlite3.Row) -> StoredPrompt:
