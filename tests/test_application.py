@@ -8,6 +8,7 @@ from chatgpt_client.errors import ConfigurationError
 from chatgpt_client.repository import PromptRepository
 from tests.helpers import FakeGenerator, FakeGeneratorFactory, PromptFactory, SettingsFactory
 
+
 @pytest.fixture
 def application(
     repository: PromptRepository,

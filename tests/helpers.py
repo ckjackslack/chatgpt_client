@@ -12,6 +12,7 @@ from chatgpt_client.application import GeneratorFactory
 from chatgpt_client.config import Settings
 from chatgpt_client.models import GeneratedResponse, StoredPrompt
 
+
 @dataclass(frozen=True, slots=True)
 class GenerationCall:
     prompt: str

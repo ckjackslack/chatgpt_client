@@ -16,6 +16,7 @@ from chatgpt_client.errors import ResponseGenerationError
 from chatgpt_client.repository import PromptRepository
 from tests.helpers import CLIRunner, FakeGenerator, FakeGeneratorFactory, PromptFactory
 
+
 @pytest.mark.parametrize(
     ("arguments", "command_type"),
     [
