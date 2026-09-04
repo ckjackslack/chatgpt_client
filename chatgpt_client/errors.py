@@ -13,6 +13,10 @@ class RepositoryError(ChatGPTClientError):
     """Raised when local history cannot be initialized or accessed."""
 
 
+class DatabaseError(RepositoryError):
+    """Raised when the SQLite infrastructure cannot complete an operation."""
+
+
 class UsageError(ChatGPTClientError, ValueError):
     """Raised when a valid CLI command would perform an unsafe operation."""
 

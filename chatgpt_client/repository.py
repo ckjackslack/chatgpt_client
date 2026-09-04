@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from math import ceil, isfinite
 from pathlib import Path
 from typing import cast
 
+from chatgpt_client.database import (
+    DEFAULT_TIMEOUT_SECONDS,
+    Migration,
+    MigrationPlan,
+    SQLiteConfig,
+    SQLiteDatabase,
+    TransactionMode,
+)
 from chatgpt_client.errors import RepositoryError
 from chatgpt_client.models import NewPrompt, StoredPrompt
 
-SCHEMA_VERSION = 2
-SQLITE_TIMEOUT_SECONDS = 5.0
+SQLITE_TIMEOUT_SECONDS = DEFAULT_TIMEOUT_SECONDS
 _SELECT_PROMPTS = """
     SELECT
         id,
@@ -34,58 +38,24 @@ class PromptRepository:
         *,
         timeout_seconds: float = SQLITE_TIMEOUT_SECONDS,
     ) -> None:
-        if not isfinite(timeout_seconds) or timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be a finite number greater than zero")
-        self.database_path = database_path
-        self.timeout_seconds = timeout_seconds
+        self._database = SQLiteDatabase(
+            SQLiteConfig(database_path, timeout_seconds),
+            configure_connection=_configure_connection,
+        )
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        try:
-            connection = sqlite3.connect(
-                self.database_path,
-                timeout=self.timeout_seconds,
-            )
-            connection.row_factory = sqlite3.Row
-            busy_timeout_ms = max(1, ceil(self.timeout_seconds * 1_000))
-            connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.create_function("CASEFOLD", 1, _casefold, deterministic=True)
-            try:
-                yield connection
-            finally:
-                connection.close()
-        except sqlite3.Error as exc:
-            raise RepositoryError(
-                f"SQLite operation failed for {self.database_path}: {exc}"
-            ) from exc
+    @property
+    def database_path(self) -> Path:
+        return self._database.path
 
     def initialize(self) -> None:
-        try:
-            self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise RepositoryError(
-                f"Cannot create database directory {self.database_path.parent}: {exc}"
-            ) from exc
-
-        with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
-            with connection:
-                connection.execute("BEGIN IMMEDIATE")
-                version = _schema_version(connection)
-                if version > SCHEMA_VERSION:
-                    raise RepositoryError(
-                        f"Database schema version {version} is newer than supported "
-                        f"version {SCHEMA_VERSION}."
-                    )
-                for target_version in range(version + 1, SCHEMA_VERSION + 1):
-                    _MIGRATIONS[target_version](connection)
-                    connection.execute(f"PRAGMA user_version = {target_version}")
-                _validate_schema(connection)
-                _validate_integrity(connection)
+        self._database.prepare()
+        with self._database.transaction(TransactionMode.IMMEDIATE) as connection:
+            _MIGRATIONS.apply(connection)
+            _validate_schema(connection)
+            self._database.validate_integrity(connection)
 
     def add(self, prompt: NewPrompt) -> StoredPrompt:
-        with self._connect() as connection, connection:
+        with self._database.transaction() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO prompts (key, request_id, prompt, model, response)
@@ -108,7 +78,7 @@ class PromptRepository:
         return _to_prompt(row)
 
     def get(self, prompt_id: int) -> StoredPrompt | None:
-        with self._connect() as connection:
+        with self._database.connection() as connection:
             row = connection.execute(
                 f"{_SELECT_PROMPTS} WHERE id = ?",
                 (prompt_id,),
@@ -123,7 +93,7 @@ class PromptRepository:
                 raise ValueError("limit must be a positive integer")
             query += " LIMIT ?"
             parameters = (limit,)
-        with self._connect() as connection:
+        with self._database.connection() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [_to_prompt(row) for row in rows]
 
@@ -131,7 +101,7 @@ class PromptRepository:
         if not query.strip():
             raise ValueError("query must not be empty")
         pattern = f"%{_escape_like(query.casefold())}%"
-        with self._connect() as connection:
+        with self._database.connection() as connection:
             rows = connection.execute(
                 f"""
                 {_SELECT_PROMPTS}
@@ -144,7 +114,7 @@ class PromptRepository:
         return [_to_prompt(row) for row in rows]
 
     def clear(self) -> int:
-        with self._connect() as connection, connection:
+        with self._database.transaction() as connection:
             count = connection.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
             connection.execute("DELETE FROM prompts")
         return int(count)
@@ -199,17 +169,6 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         )
 
 
-def _schema_version(connection: sqlite3.Connection) -> int:
-    return int(connection.execute("PRAGMA user_version").fetchone()[0])
-
-
-def _validate_integrity(connection: sqlite3.Connection) -> None:
-    results = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
-    if results != ["ok"]:
-        details = "; ".join(results) if results else "no result"
-        raise RepositoryError(f"Database integrity check failed: {details}.")
-
-
 def _column_names(connection: sqlite3.Connection) -> set[str]:
     return {
         cast(str, row["name"])
@@ -225,6 +184,10 @@ def _casefold(value: str | None) -> str:
     return value.casefold() if value is not None else ""
 
 
+def _configure_connection(connection: sqlite3.Connection) -> None:
+    connection.create_function("CASEFOLD", 1, _casefold, deterministic=True)
+
+
 def _to_prompt(row: sqlite3.Row) -> StoredPrompt:
     return StoredPrompt(
         id=cast(int, row["id"]),
@@ -237,7 +200,10 @@ def _to_prompt(row: sqlite3.Row) -> StoredPrompt:
     )
 
 
-_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
-    1: _migrate_to_v1,
-    2: _migrate_to_v2,
-}
+_MIGRATIONS = MigrationPlan(
+    (
+        Migration(1, _migrate_to_v1),
+        Migration(2, _migrate_to_v2),
+    )
+)
+SCHEMA_VERSION = _MIGRATIONS.target_version

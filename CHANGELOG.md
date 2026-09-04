@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. The format foll
 - An official OpenAI SDK adapter using the Responses API.
 - Versioned SQLite migrations and persisted OpenAI response/request identifiers.
 - Secret-free verbose diagnostics, an opt-in live API test, and installed-wheel smoke testing.
+- Reusable SQLite connection, transaction, and migration-plan infrastructure.
 - Python 3.11–3.13 CI, strict mypy, Ruff, branch coverage, and trusted PyPI publishing.
 
 ### Changed

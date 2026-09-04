@@ -111,10 +111,11 @@ manual `Live OpenAI integration` workflow runs the same test through a protected
 
 | Module | Responsibility |
 |---|---|
+| `database.py` | SQLite connections, transactions, pragmas, and migration execution |
 | `config.py` | `.env` parsing and immutable settings |
 | `api.py` | Official SDK / Responses API adapter |
 | `application.py` | Use cases and dependency inversion |
-| `repository.py` | SQLite schema migration and prompt persistence |
+| `repository.py` | Prompt-specific SQL, schema definitions, and row mapping |
 | `formatting.py` | Tables and code extraction |
 | `diagnostics.py` | Secret-free runtime and request diagnostics |
 | `cli.py` | Argument parsing and application orchestration |

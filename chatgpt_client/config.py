@@ -6,11 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chatgpt_client.database import (
+    DEFAULT_TIMEOUT_SECONDS as DEFAULT_DATABASE_TIMEOUT_SECONDS,
+)
 from chatgpt_client.errors import ConfigurationError
 
 DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_DATABASE = Path("prompts.db")
-DEFAULT_DATABASE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_RETRIES = 2
 _ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

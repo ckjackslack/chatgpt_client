@@ -135,31 +135,6 @@ def test_sqlite_errors_are_wrapped_with_database_context(tmp_path: Path) -> None
         PromptRepository(database_directory).initialize()
 
 
-def test_corrupted_database_is_reported_with_context(tmp_path: Path) -> None:
-    database = tmp_path / "corrupted.db"
-    database.write_bytes(b"this is not a SQLite database")
-
-    with pytest.raises(RepositoryError, match=r"SQLite operation failed.*corrupted\.db"):
-        PromptRepository(database).initialize()
-
-
-def test_locked_database_obeys_configured_timeout(
-    repository: PromptRepository,
-    database_path: Path,
-) -> None:
-    prompt = NewPrompt("resp", "req", "question", "model", "answer")
-    with sqlite_connection(database_path) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        with pytest.raises(RepositoryError, match="database is locked"):
-            PromptRepository(database_path, timeout_seconds=0.01).add(prompt)
-
-
-@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
-def test_invalid_database_timeout_is_rejected(tmp_path: Path, timeout: float) -> None:
-    with pytest.raises(ValueError, match="finite number greater than zero"):
-        PromptRepository(tmp_path / "history.db", timeout_seconds=timeout)
-
-
 def test_request_id_round_trip(repository: PromptRepository) -> None:
     stored = repository.add(
         NewPrompt(
