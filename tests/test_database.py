@@ -102,10 +102,13 @@ def test_transaction_rolls_back_failed_unit_of_work(database: SQLiteDatabase) ->
     with database.transaction() as connection:
         connection.execute("CREATE TABLE example (value TEXT NOT NULL)")
 
-    with pytest.raises(RuntimeError, match="abort"):
+    def abort_transaction() -> None:
         with database.transaction(TransactionMode.IMMEDIATE) as connection:
             connection.execute("INSERT INTO example VALUES ('rolled back')")
             raise RuntimeError("abort")
+
+    with pytest.raises(RuntimeError, match="abort"):
+        abort_transaction()
 
     with database.connection() as connection:
         count = connection.execute("SELECT COUNT(*) FROM example").fetchone()[0]
@@ -137,12 +140,12 @@ def test_locked_database_obeys_configured_timeout(tmp_path: Path) -> None:
     with database.transaction() as connection:
         connection.execute("CREATE TABLE example (value TEXT NOT NULL)")
 
-    with database.transaction(TransactionMode.IMMEDIATE):
-        with (
-            pytest.raises(DatabaseError, match="database is locked"),
-            database.transaction(TransactionMode.IMMEDIATE),
-        ):
-            pass
+    with (
+        database.transaction(TransactionMode.IMMEDIATE),
+        pytest.raises(DatabaseError, match="database is locked"),
+        database.transaction(TransactionMode.IMMEDIATE),
+    ):
+        pass
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
